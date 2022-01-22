@@ -1,7 +1,7 @@
 const express = require('express');
 const app = express();
 const port = 8080;
-const { Pool } = require('pg')
+const { Pool } = require('pg');
 
 app.use(express.json());
 
@@ -11,7 +11,7 @@ app.listen(port, () => {
 
 const client = new Pool ({
   user: 'postgres',
-  host: 'ec2-3-80-89-124.compute-1.amazonaws.com',            //'localhost',
+  host: '52.3.175.99',            //'localhost',
   database: 'postgres',
   password: 'password',
   port: 5432,
@@ -27,47 +27,62 @@ client.connect(err => {
 
 
 
+const getCacheReviews = {};
+const getCacheMeta = {};
 
 
+
+updateCache = () => {
+  console.log('reset caches');
+  const getCacheReviews = {};
+  const getCacheMeta = {};
+}
+
+setInterval(updateCache, 20000);
 //app.use('/', express.static(__dirname + '/../frontend/dist'));
 app.use(express.json());
 
-
 app.get('/reviews', (req, res) => {
-  console.log();
+  console.log('herer');
+  const reviewsQuery = `SELECT * FROM reviews r WHERE product_id = ${req.query.product_id} LIMIT ${count}`;
+  const argsString = JSON.stringify(reviewsQuery);
+  if (getCacheReviews[argsString]) {
+    console.log('Cache used!!');
+    res.send(getCacheReviews[argsString]) ;
+  } else {
   let count = req.query.count || 5;
   let page = req.query.page || 1;
-  const reviewsQuery = `SELECT * FROM reviews r WHERE product_id = ${req.query.product_id} LIMIT ${count}`
+
   let returnObject = { "product": req.query.product_id, "page": page , "count": count,"results": []};
   client.query(reviewsQuery, (err, result) => {
     if (err) throw err
     returnObject.results = result.rows;
     result.rows.forEach( (oneReview) => {
-      oneReview.review_id = oneReview.id
-      delete oneReview.id
-      delete oneReview.product_id
-      delete oneReview.reviewer_email
-      oneReview.response = oneReview.response === 'null' ? null : oneReview.response
+      oneReview.review_id = oneReview.id;
+      delete oneReview.id;
+      delete oneReview.product_id;
+      delete oneReview.reviewer_email;
+      oneReview.response = oneReview.response === 'null' ? null : oneReview.response;
       oneReview.photos = [];
       photosQuery = `SELECT * FROM photos p WHERE review_id = ${oneReview.review_id}`;
       client.query(photosQuery, (err, result) => {
         console.log(oneReview.review_id)
         oneReview.photos = result? result.rows : [];
         if (oneReview.photos) {
-
         }
-
     })
     })
-    res.send(returnObject)
+    if (Object.keys(getCacheReviews).length < 1000) {
+      getCacheReviews[argsString] = returnObject;
+    };
+    res.send(returnObject);
   });
+}
 });
 
 
 
 app.get('/reviews/meta', (req, res) => {
-  console.log(req.query.product_id,'asdfasdf');
-  let x = `select * from reviews limit 5`;
   let reviewsQuery = `
   SELECT json_build_object(
     'product_id', r.product_id,
@@ -87,13 +102,19 @@ app.get('/reviews/meta', (req, res) => {
           'id',(select c.characteristic_id from characteristic c left join characteristic_reviews cr on cr.characteristic_id = c.characteristic_id where c. product_id = $1 GROUP BY c.characteristic_id limit 1))))
     from characteristic c left join characteristic_reviews cr on cr.characteristic_id=c.characteristic_id where c.product_id = $1))
     from reviews r left JOIN characteristic c on r.product_id = c.product_id where r.product_id=$1 group by r.product_id;`;
-    console.log('2');
+    const argsString = JSON.stringify(reviewsQuery);
+    if (getCacheMeta[argsString]) {
+      console.log('Cache used!!');
+      res.send(getCacheMeta[argsString]) ;
+    } else {
   client.query(reviewsQuery, [req.query.product_id], (err, result) => {
     if (err) {console.log(err)};
-    console.log('3');
-
-    res.send(result.rows[0].json_build_object)
+    if (Object.keys(getCacheReviews).length < 1000) {
+      getCacheMeta[argsString] = result.rows[0].json_build_object;
+    };
+    res.send(result.rows[0].json_build_object);
   });
+}
 });
 
 app.put('/reviews/:reviewId/:type', (req, res) => {
@@ -102,11 +123,11 @@ app.put('/reviews/:reviewId/:type', (req, res) => {
   if (req.params.type === 'helpful') {
     let reviewsQuery = `  UPDATE reviews r
     SET helpfulness =helpfulness+ 1
-    WHERE r.id=${req.params.reviewId}`
+    WHERE r.id=${req.params.reviewId}`;
 
     client.query(reviewsQuery, (err, result) => {
       if (err) {console.log(err)};
-      res.send('help updated')
+      res.send('help updated');
     });
   } else if (req.params.type === 'report') {
     let reviewsQuery = `  UPDATE reviews r SET reported=reported + 1
@@ -114,15 +135,13 @@ app.put('/reviews/:reviewId/:type', (req, res) => {
     client.query(reviewsQuery, (err, result) => {
       if (err) {console.log(err)};
 
-      res.send('report updated')
+      res.send('report updated');
     });
   } else {
     res.send(500, 'NOT putted!');
 
   }
 })
-
-
 
 app.post('/reviews', (req, res) => {
   console.log(req.body);
@@ -147,21 +166,19 @@ app.post('/reviews', (req, res) => {
     reviewer_email,
     response,
     helpfulness)
-  VALUES (${req.body.product_id},
-    ${req.body.rating},
-    ${Math.round((new Date()).getTime() / 1000)},
-    ${req.body.summary},
-    ${req.body.body},
-    ${req.body.recommend},
+  VALUES ($1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
     0,
-    ${req.body.name},
-    ${req.body.reviewer_email},
+    $7,
+    $8,
     ${null},
     0);`;
 
-  client.query(reviewsQuery, (err, result) => {
+  client.query(reviewsQuery,[req.body.product_id,req.body.rating,Math.round((new Date()).getTime() / 1000),req.body.summary,req.body.body,req.body.recommend,req.body.name,req.body.reviewer_email], (err, result) => {
     if (err) {console.log(err)};
-
-
   });
 });
